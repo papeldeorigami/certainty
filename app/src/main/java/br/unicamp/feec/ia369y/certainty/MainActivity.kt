@@ -5,11 +5,14 @@ import android.media.AudioRecord
 import android.media.MediaPlayer
 import android.support.v7.app.AppCompatActivity
 import android.os.Bundle
-import android.widget.ImageButton
 import android.widget.Toast
 import kotlinx.android.synthetic.main.activity_main.*
 import android.media.MediaRecorder.AudioSource
+import android.os.Environment
 import android.util.Log
+import com.github.kittinunf.fuel.Fuel
+import com.github.kittinunf.fuel.core.Blob
+import java.io.*
 
 
 /**
@@ -20,15 +23,8 @@ import android.util.Log
 
 class MainActivity : AppCompatActivity() {
 
-    // The sampling rate for the audio recorder.
-    private val SAMPLING_RATE = 44100
-    // The encoding format for the audio recorder.
-    private val AUDIO_ENCODING = AudioFormat.ENCODING_PCM_16BIT
-
     private var mRecordingThread: RecordingThread? = null
-    private var mBufferSize: Int = 0
-    private var mAudioBuffer: ShortArray? = null
-    private val mDecibelFormat: String? = null
+    //private val mDecibelFormat: String? = null
 
     private var isRecording = false
     private var isPlaying = false
@@ -38,14 +34,6 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         decibelTextView.text = ""
-
-        // Compute the minimum required audio buffer size and allocate the buffer.
-        mBufferSize = AudioRecord.getMinBufferSize(
-            SAMPLING_RATE,
-            AudioFormat.CHANNEL_IN_MONO,
-            AUDIO_ENCODING
-        )
-        mAudioBuffer = ShortArray(mBufferSize / 2)
 
         mRecordingThread = RecordingThread()
 
@@ -88,30 +76,80 @@ class MainActivity : AppCompatActivity() {
      */
     private inner class RecordingThread : Thread() {
 
+        private var mBufferSize: Int = 0
+        private var mAudioBuffer: ByteArray? = null
+
         private var mShouldContinue = true
 
+        private val logTag = "RecordingThread"
+
+        private var recordingFilePath = "";
+
         override fun run() {
-            Log.d("RecordingThread", "Start recording")
+            Log.d(logTag, "Start recording")
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
+
+            // Compute the minimum required audio buffer size and allocate the buffer.
+            mBufferSize = AudioRecord.getMinBufferSize(
+                Constants.SAMPLING_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                Constants.AUDIO_ENCODING
+            )
+            mAudioBuffer = ByteArray(mBufferSize / 2)
+
+            recordingFilePath = (Environment.getExternalStorageDirectory().path
+                    + "/" + Constants.AUDIO_RECORDING_FILE_NAME)
+            var outputStream: BufferedOutputStream? = null
+            try {
+                outputStream = BufferedOutputStream(FileOutputStream(recordingFilePath))
+            } catch (e: FileNotFoundException) {
+                Log.e(logTag, "File not found for recording ", e)
+            }
 
             val record = AudioRecord(
                 AudioSource.MIC,
-                SAMPLING_RATE,
+                Constants.SAMPLING_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
-                AUDIO_ENCODING,
+                Constants.AUDIO_ENCODING,
                 mBufferSize
             )
             record.startRecording()
 
             while (shouldContinue()) {
-                record.read(mAudioBuffer!!, 0, mBufferSize / 2)
+                val status = record.read(mAudioBuffer!!, 0, mBufferSize / 2)
+                if (status == AudioRecord.ERROR_INVALID_OPERATION ||
+                    status == AudioRecord.ERROR_BAD_VALUE
+                ) {
+                    Log.e(logTag, "Error reading audio data!")
+                    return
+                }
+                try {
+                    outputStream!!.write(mAudioBuffer!!, 0, mAudioBuffer!!.size)
+                } catch (e: Exception) {
+                    Log.e(logTag, "Error saving recording ", e)
+                    return
+                }
                 //mWaveformView.updateAudioData(mAudioBuffer)
                 updateDecibelLevel()
             }
 
+            outputStream!!.close()
             record.stop()
             record.release()
-            Log.d("RecordingThread", "Stop recording")
+            Log.d(logTag, "Stop recording")
+
+            uploadRecordingFile();
+        }
+
+        private fun uploadRecordingFile() {
+            val someObject = File(recordingFilePath)
+            Fuel.upload(Constants.ANSWERS_URL)
+                .header(mapOf("CONTENT-TYPE" to "audio/*"))
+                .blob { request, url ->
+                    Blob(Constants.AUDIO_RECORDING_FILE_NAME, someObject.length(), { someObject.inputStream() })
+                }
+                .also { println(it) }
+                .responseString { request, response, result -> Log.i(logTag, response.toString()) }
         }
 
         /**
