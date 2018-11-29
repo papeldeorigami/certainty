@@ -4,4 +4,5 @@
     <string name="recording_activity_title">Ouça a questão e grave a sua resposta</string>
     <string name="check">Verificar</string>
     <string name="answer">Resposta</string>
+    <string name="title_activity_result">ResultActivity</string>
 </resources>
